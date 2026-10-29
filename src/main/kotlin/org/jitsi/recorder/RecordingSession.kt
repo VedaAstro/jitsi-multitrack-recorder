@@ -17,19 +17,27 @@
  */
 package org.jitsi.recorder
 
+import com.fasterxml.jackson.databind.exc.InvalidTypeIdException
 import kotlinx.coroutines.CancellationException
 import org.jitsi.mediajson.Event
+import org.jitsi.mediajson.InfoEvent
+import org.jitsi.mediajson.MediaEvent
 import org.jitsi.mediajson.PingEvent
 import org.jitsi.mediajson.PongEvent
 import org.jitsi.mediajson.SessionEndEvent
+import org.jitsi.mediajson.StartEvent
 import org.jitsi.mediajson.TranscriptionResultEvent
 import org.jitsi.utils.logging2.createLogger
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import org.jitsi.recorder.RecorderMetrics.Companion.instance as metrics
 
 class RecordingSession(private val meetingId: String) {
     private val logger = createLogger().apply { addContext("meetingId", meetingId) }
     private val directory = selectDirectory(meetingId)
+
+    /** Event type ids already reported, so repeated unknown types don't spam the log. */
+    private val reportedUnknownEventTypeIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     init {
         metrics.sessionsStarted.inc()
@@ -46,14 +54,36 @@ class RecordingSession(private val meetingId: String) {
         return try {
             when (val event = Event.parse(text)) {
                 is PingEvent -> PongEvent(event.id).toJson()
+                is InfoEvent -> {
+                    // The bridge sends an informational message (its version, region, ...) when the
+                    // connection is established. It describes the sender, not the session's media.
+                    logger.info("Received info from the bridge: ${event.toJson()}")
+                    null
+                }
+                is StartEvent, is MediaEvent -> {
+                    mediaJsonRecorder.addEvent(event)
+                    null
+                }
                 is PongEvent, is SessionEndEvent, is TranscriptionResultEvent -> null
                 else -> {
-                    mediaJsonRecorder.addEvent(event)
+                    // Other known event types (e.g. "stop") are control-plane traffic the recording
+                    // does not depend on.
+                    logger.debug("Ignoring event: ${event.toJson()}")
                     null
                 }
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: InvalidTypeIdException) {
+            // A newer bridge may send event types this version doesn't know about (e.g. the "info"
+            // event jitsi-videobridge sends on connect since 2.3-307, before jicoco learned of it).
+            // The recording only depends on "start" and "media", so skipping is safe. Log without
+            // a stack trace, once per type id, instead of a SEVERE with a stack per event.
+            val typeId = e.typeId ?: "null"
+            if (reportedUnknownEventTypeIds.add(typeId)) {
+                logger.warn("Ignoring event with unknown type id '$typeId'")
+            }
+            null
         } catch (e: Exception) {
             logger.error("Error", e)
             null

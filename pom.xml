@@ -9,7 +9,7 @@
     <exec.mainClass>org.jitsi.recorder.MainKt</exec.mainClass>
     <kotest.version>5.9.1</kotest.version>
     <kotlinx-coroutines.version>1.9.0</kotlinx-coroutines.version>
-    <jicoco.version>1.1-169-g2247444</jicoco.version>
+    <jicoco.version>1.1-176-ge8384e2</jicoco.version>
     <ktor.version>3.0.0</ktor.version>
     <ktlint.version>3.0.0</ktlint.version>
     <surefire.version>3.5.1</surefire.version>
